@@ -214,11 +214,11 @@ function renderNotes() {
         }
       });
 
-      textArea.addEventListener("pointerdown", (event) => {
-        event.stopPropagation();
+      textArea.addEventListener("focus", () => {
+        activeEditingNoteId = note.id;
         bringNoteToFront(note.id, noteElement);
       });
-
+      
       deleteButton.addEventListener("click", () => {
         deleteNote(note.id);
       });
@@ -246,6 +246,11 @@ function setupDrag(noteElement, noteId) {
       return;
     }
 
+    if (window.innerWidth <= 720 && event.pointerType !== "mouse") {
+      bringNoteToFront(noteId, noteElement);
+      return;
+    }
+
     event.preventDefault();
 
     bringNoteToFront(noteId, noteElement);
@@ -260,8 +265,8 @@ function setupDrag(noteElement, noteId) {
     const handlePointerMove = (moveEvent) => {
       const boardRect = notesBoard.getBoundingClientRect();
       const nextPosition = clampPosition(
-        moveEvent.clientX - boardRect.left - dragOffsetX,
-        moveEvent.clientY - boardRect.top - dragOffsetY
+        moveEvent.clientX - boardRect.left + notesBoard.scrollLeft - dragOffsetX,
+        moveEvent.clientY - boardRect.top + notesBoard.scrollTop - dragOffsetY
       );
 
       noteElement.style.left = `${nextPosition.x}px`;

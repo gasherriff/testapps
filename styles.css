@@ -121,7 +121,7 @@ textarea {
 .notes-board {
   position: relative;
   min-height: 72vh;
-  overflow: hidden;
+  overflow: auto;
   border: 1px solid rgba(255, 255, 255, 0.75);
   border-radius: 34px;
   background:
@@ -131,6 +131,7 @@ textarea {
   background-size: 32px 32px, 32px 32px, 100% 100%;
   box-shadow: var(--shadow);
   backdrop-filter: blur(14px);
+  -webkit-overflow-scrolling: touch;
 }
 
 .note {
@@ -144,7 +145,7 @@ textarea {
   box-shadow: 0 18px 24px rgba(129, 102, 127, 0.18);
   cursor: grab;
   user-select: none;
-  touch-action: none;
+  touch-action: manipulation;
   transition: transform 140ms ease, box-shadow 140ms ease;
 }
 
@@ -220,6 +221,10 @@ textarea {
 }
 
 @media (max-width: 720px) {
+  body {
+    overflow-x: hidden;
+  }
+
   .app-shell {
     width: min(100% - 1rem, 1200px);
     padding-top: 1rem;
@@ -231,11 +236,17 @@ textarea {
   }
 
   .notes-board {
-    min-height: 78vh;
+    min-height: 95vh;
+    padding-bottom: 12rem;
+    overflow: auto;
   }
 
   .note {
-    width: min(220px, calc(100vw - 2.5rem));
+    width: min(240px, calc(100vw - 2.5rem));
     min-height: 210px;
+  }
+
+  .note-text {
+    font-size: 1.6rem;
   }
 }
