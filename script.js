@@ -14,6 +14,7 @@ const NOTE_COLORS = [
 
 const addNoteButton = document.getElementById("add-note-button");
 const notesBoard = document.getElementById("notes-board");
+const notesCanvas = document.getElementById("notes-canvas");
 const noteTemplate = document.getElementById("note-template");
 const syncStatus = document.getElementById("sync-status");
 
@@ -110,8 +111,8 @@ function getNoteDimensions() {
 
 function clampPosition(x, y) {
   const { width, height } = getNoteDimensions();
-  const maxX = Math.max(12, notesBoard.clientWidth - width - 12);
-  const maxY = Math.max(12, notesBoard.clientHeight - height - 12);
+  const maxX = Math.max(12, notesCanvas.clientWidth - width - 12);
+  const maxY = Math.max(12, notesCanvas.clientHeight - height - 12);
 
   return {
     x: Math.min(Math.max(12, x), maxX),
@@ -177,7 +178,7 @@ function renderNotes() {
       }
     : null;
 
-  notesBoard.innerHTML = "";
+  notesCanvas.innerHTML = "";
 
   notes
     .slice()
@@ -224,17 +225,28 @@ function renderNotes() {
       });
 
       setupDrag(noteElement, note.id);
-      notesBoard.appendChild(noteFragment);
+      notesCanvas.appendChild(noteFragment);
     });
 
+  updateBoardCanvasSize();
+
   if (focusState?.noteId) {
-    const nextTextArea = notesBoard.querySelector(`[data-note-id="${focusState.noteId}"] .note-text`);
+    const nextTextArea = notesCanvas.querySelector(`[data-note-id="${focusState.noteId}"] .note-text`);
 
     if (nextTextArea) {
       nextTextArea.focus();
       nextTextArea.setSelectionRange(focusState.selectionStart, focusState.selectionEnd);
     }
   }
+}
+
+function updateBoardCanvasSize() {
+  const { width, height } = getNoteDimensions();
+  const furthestX = notes.reduce((max, note) => Math.max(max, note.x + width + 24), notesBoard.clientWidth);
+  const furthestY = notes.reduce((max, note) => Math.max(max, note.y + height + 24), notesBoard.clientHeight);
+
+  notesCanvas.style.width = `${furthestX}px`;
+  notesCanvas.style.height = `${furthestY}px`;
 }
 
 function setupDrag(noteElement, noteId) {
@@ -247,11 +259,16 @@ function setupDrag(noteElement, noteId) {
     }
 
     if (window.innerWidth <= 720 && event.pointerType !== "mouse") {
-      bringNoteToFront(noteId, noteElement);
-      return;
-    }
+      if (!event.target.closest(".note-footer")) {
+        return;
+      }
 
-    event.preventDefault();
+      event.preventDefault();
+      bringNoteToFront(noteId, noteElement);
+    }
+    else {
+      event.preventDefault();
+    }
 
     bringNoteToFront(noteId, noteElement);
     noteElement.classList.add("is-dragging");
@@ -263,15 +280,16 @@ function setupDrag(noteElement, noteId) {
     noteElement.setPointerCapture(event.pointerId);
 
     const handlePointerMove = (moveEvent) => {
-      const boardRect = notesBoard.getBoundingClientRect();
+      const canvasRect = notesCanvas.getBoundingClientRect();
       const nextPosition = clampPosition(
-        moveEvent.clientX - boardRect.left + notesBoard.scrollLeft - dragOffsetX,
-        moveEvent.clientY - boardRect.top + notesBoard.scrollTop - dragOffsetY
+        moveEvent.clientX - canvasRect.left - dragOffsetX,
+        moveEvent.clientY - canvasRect.top - dragOffsetY
       );
 
       noteElement.style.left = `${nextPosition.x}px`;
       noteElement.style.top = `${nextPosition.y}px`;
       updateNote(noteId, nextPosition);
+      updateBoardCanvasSize();
     };
 
     const stopDragging = (pointerEvent) => {
