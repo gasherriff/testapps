@@ -113,6 +113,10 @@ function initializeSupabase() {
   );
 }
 
+function getFunctionUrl(functionName) {
+  return `${window.SUPABASE_CONFIG.url}/functions/v1/${functionName}`;
+}
+
 function createNoteData(overrides = {}) {
   highestZIndex += 1;
 
@@ -643,12 +647,21 @@ async function translateNote(noteId) {
     return;
   }
 
-  const { data, error } = await supabaseClient.functions.invoke(TRANSLATE_FUNCTION_NAME, {
-    body: { text: sourceText }
+  const response = await fetch(getFunctionUrl(TRANSLATE_FUNCTION_NAME), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: window.SUPABASE_CONFIG.anonKey,
+      Authorization: `Bearer ${window.SUPABASE_CONFIG.anonKey}`
+    },
+    body: JSON.stringify({ text: sourceText })
   });
 
-  if (error) {
-    throw error;
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const message = data?.error || `Translation request failed with status ${response.status}.`;
+    throw new Error(message);
   }
 
   const latestNote = notes.find((entry) => entry.id === noteId);
