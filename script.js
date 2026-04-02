@@ -23,6 +23,7 @@ let supabaseClient = null;
 let syncTimeoutId = null;
 let pendingSyncIds = new Map();
 let locallyDirtyNoteIds = new Map();
+let activeEditingNoteId = null;
 let isHydratingFromRemote = false;
 
 function loadNotes() {
@@ -166,6 +167,16 @@ function addNewNote() {
 }
 
 function renderNotes() {
+  const activeElement = document.activeElement;
+  const activeNoteElement = activeElement?.closest?.(".note");
+  const focusState = activeNoteElement
+    ? {
+        noteId: activeNoteElement.dataset.noteId,
+        selectionStart: activeElement.selectionStart,
+        selectionEnd: activeElement.selectionEnd
+      }
+    : null;
+
   notesBoard.innerHTML = "";
 
   notes
@@ -193,6 +204,16 @@ function renderNotes() {
         updateNote(note.id, { text: event.target.value });
       });
 
+      textArea.addEventListener("focus", () => {
+        activeEditingNoteId = note.id;
+      });
+
+      textArea.addEventListener("blur", () => {
+        if (activeEditingNoteId === note.id) {
+          activeEditingNoteId = null;
+        }
+      });
+
       textArea.addEventListener("pointerdown", (event) => {
         event.stopPropagation();
         bringNoteToFront(note.id, noteElement);
@@ -205,6 +226,15 @@ function renderNotes() {
       setupDrag(noteElement, note.id);
       notesBoard.appendChild(noteFragment);
     });
+
+  if (focusState?.noteId) {
+    const nextTextArea = notesBoard.querySelector(`[data-note-id="${focusState.noteId}"] .note-text`);
+
+    if (nextTextArea) {
+      nextTextArea.focus();
+      nextTextArea.setSelectionRange(focusState.selectionStart, focusState.selectionEnd);
+    }
+  }
 }
 
 function setupDrag(noteElement, noteId) {
@@ -309,7 +339,7 @@ function mergeRemoteWithLocal(remoteNotes) {
   const localNotesById = new Map(notes.map((note) => [note.id, note]));
 
   return remoteNotes.map((remoteNote) => {
-    if (locallyDirtyNoteIds.has(remoteNote.id)) {
+    if (locallyDirtyNoteIds.has(remoteNote.id) || activeEditingNoteId === remoteNote.id) {
       return localNotesById.get(remoteNote.id) || remoteNote;
     }
 
