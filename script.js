@@ -285,6 +285,25 @@ function normalizeRemoteNote(note) {
   };
 }
 
+function notesAreEqual(firstNotes, secondNotes) {
+  if (firstNotes.length !== secondNotes.length) {
+    return false;
+  }
+
+  return firstNotes.every((note, index) => {
+    const otherNote = secondNotes[index];
+
+    return (
+      note.id === otherNote.id &&
+      note.text === otherNote.text &&
+      note.color === otherNote.color &&
+      note.x === otherNote.x &&
+      note.y === otherNote.y &&
+      note.zIndex === otherNote.zIndex
+    );
+  });
+}
+
 function noteToRow(note) {
   return {
     id: note.id,
@@ -315,15 +334,26 @@ async function syncNotesFromRemote() {
   }
 
   const remoteNotes = await loadNotesFromRemote();
+  const sortedRemoteNotes = remoteNotes
+    .slice()
+    .sort((first, second) => (first.zIndex || 0) - (second.zIndex || 0));
+  const sortedLocalNotes = notes
+    .slice()
+    .sort((first, second) => (first.zIndex || 0) - (second.zIndex || 0));
 
-  if (remoteNotes.length === 0 && notes.length > 0) {
+  if (sortedRemoteNotes.length === 0 && notes.length > 0) {
     await supabaseClient.from("notes").upsert(notes.map(noteToRow));
     setSyncStatus("Shared board ready. Everyone sees the same notes.", "ready");
     return;
   }
 
+  if (notesAreEqual(sortedLocalNotes, sortedRemoteNotes)) {
+    setSyncStatus("Shared board ready. Everyone sees the same notes.", "ready");
+    return;
+  }
+
   isHydratingFromRemote = true;
-  notes = remoteNotes;
+  notes = sortedRemoteNotes;
   highestZIndex = notes.reduce((max, note) => Math.max(max, note.zIndex || 1), 1);
   saveNotes();
   renderNotes();
