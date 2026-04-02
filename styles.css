@@ -205,9 +205,17 @@ textarea {
   display: flex;
   justify-content: flex-end;
   margin-top: 0.5rem;
+  width: 100%;
 }
 
 .drag-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 8.5rem;
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.38);
   font-size: 0.78rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -250,6 +258,17 @@ textarea {
   .note {
     width: min(240px, calc(100vw - 2.5rem));
     min-height: 210px;
+  }
+
+  .note-footer {
+    justify-content: center;
+    margin-top: 0.7rem;
+  }
+
+  .drag-hint {
+    min-width: 100%;
+    padding: 0.6rem 0.85rem;
+    touch-action: none;
   }
 
   .note-text {

@@ -26,6 +26,7 @@ let pendingSyncIds = new Map();
 let locallyDirtyNoteIds = new Map();
 let activeEditingNoteId = null;
 let isHydratingFromRemote = false;
+let lastKnownViewportWidth = window.innerWidth;
 
 function loadNotes() {
   try {
@@ -306,6 +307,18 @@ function setupDrag(noteElement, noteId) {
   });
 }
 
+function handleViewportResize() {
+  const widthChanged = Math.abs(window.innerWidth - lastKnownViewportWidth) > 1;
+  lastKnownViewportWidth = window.innerWidth;
+
+  if (widthChanged) {
+    keepNotesInsideBoard();
+    return;
+  }
+
+  updateBoardCanvasSize();
+}
+
 function keepNotesInsideBoard() {
   let hasUpdates = false;
 
@@ -540,6 +553,6 @@ async function initializeApp() {
 }
 
 addNoteButton.addEventListener("click", addNewNote);
-window.addEventListener("resize", keepNotesInsideBoard);
+window.addEventListener("resize", handleViewportResize);
 
 initializeApp();
