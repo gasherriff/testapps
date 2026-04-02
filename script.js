@@ -22,6 +22,7 @@ let notes = [];
 let supabaseClient = null;
 let syncTimeoutId = null;
 let pendingSyncIds = new Map();
+let locallyDirtyNoteIds = new Map();
 let isHydratingFromRemote = false;
 
 function loadNotes() {
@@ -304,6 +305,18 @@ function notesAreEqual(firstNotes, secondNotes) {
   });
 }
 
+function mergeRemoteWithLocal(remoteNotes) {
+  const localNotesById = new Map(notes.map((note) => [note.id, note]));
+
+  return remoteNotes.map((remoteNote) => {
+    if (locallyDirtyNoteIds.has(remoteNote.id)) {
+      return localNotesById.get(remoteNote.id) || remoteNote;
+    }
+
+    return remoteNote;
+  });
+}
+
 function noteToRow(note) {
   return {
     id: note.id,
@@ -334,7 +347,11 @@ async function syncNotesFromRemote() {
   }
 
   const remoteNotes = await loadNotesFromRemote();
-  const sortedRemoteNotes = remoteNotes
+  const mergedNotes = mergeRemoteWithLocal(remoteNotes);
+  const localOnlyNotes = notes.filter((note) => !remoteNotes.some((remoteNote) => remoteNote.id === note.id));
+  const protectedLocalNotes = localOnlyNotes.filter((note) => locallyDirtyNoteIds.has(note.id));
+  const nextNotes = [...mergedNotes, ...protectedLocalNotes];
+  const sortedRemoteNotes = nextNotes
     .slice()
     .sort((first, second) => (first.zIndex || 0) - (second.zIndex || 0));
   const sortedLocalNotes = notes
@@ -385,6 +402,10 @@ async function flushPendingSync() {
     return;
   }
 
+  noteIds.forEach((noteId) => {
+    locallyDirtyNoteIds.delete(noteId);
+  });
+
   setSyncStatus("Shared board ready. Everyone sees the same notes.", "ready");
 }
 
@@ -394,6 +415,7 @@ function scheduleNoteSync(noteId) {
   }
 
   pendingSyncIds.set(noteId, true);
+  locallyDirtyNoteIds.set(noteId, Date.now());
   window.clearTimeout(syncTimeoutId);
   syncTimeoutId = window.setTimeout(() => {
     flushPendingSync().catch((error) => {
@@ -407,6 +429,9 @@ async function deleteNoteFromRemote(noteId) {
   if (!supabaseClient) {
     return;
   }
+
+  pendingSyncIds.delete(noteId);
+  locallyDirtyNoteIds.delete(noteId);
 
   const { error } = await supabaseClient.from("notes").delete().eq("id", noteId);
 
