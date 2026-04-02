@@ -79,6 +79,24 @@ textarea {
   color: var(--text-soft);
 }
 
+.sync-status {
+  margin: 0 0 1rem;
+  font-size: 0.95rem;
+  color: #8d7f96;
+}
+
+.sync-status[data-state="ready"] {
+  color: #67956d;
+}
+
+.sync-status[data-state="warning"] {
+  color: #b37a63;
+}
+
+.sync-status[data-state="error"] {
+  color: #be5f7d;
+}
+
 .add-note-button {
   border: 0;
   border-radius: 999px;

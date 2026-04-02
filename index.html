@@ -15,8 +15,9 @@
       <p class="eyebrow">Little Note Garden</p>
       <h1>Sticky Notes</h1>
       <p class="intro">
-        Add sweet little reminders, scatter them around the board, and everything stays saved in your browser.
+        Add sweet little reminders, scatter them around the board, and keep them in sync for everyone who visits.
       </p>
+      <p id="sync-status" class="sync-status">Checking shared notes connection...</p>
       <button id="add-note-button" class="add-note-button" type="button">+ Add a note</button>
     </section>
 
@@ -36,6 +37,8 @@
     </article>
   </template>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
