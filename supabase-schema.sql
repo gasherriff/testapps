@@ -1,6 +1,9 @@
 create table if not exists public.notes (
   id uuid primary key,
   text text not null default '',
+  translated_text text not null default '',
+  detected_language text,
+  translation_status text not null default 'idle',
   color text not null,
   x integer not null default 24,
   y integer not null default 24,
@@ -18,6 +21,15 @@ begin
   return new;
 end;
 $$;
+
+alter table public.notes
+add column if not exists translated_text text not null default '';
+
+alter table public.notes
+add column if not exists detected_language text;
+
+alter table public.notes
+add column if not exists translation_status text not null default 'idle';
 
 drop trigger if exists notes_set_updated_at on public.notes;
 

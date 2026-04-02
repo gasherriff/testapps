@@ -1,8 +1,10 @@
 const STORAGE_KEY = "pastel-sticky-notes";
+const TRANSLATE_FUNCTION_NAME = "translate-note";
+const TRANSLATION_DEBOUNCE_MS = 700;
 const NOTE_WIDTH = 260;
-const NOTE_HEIGHT = 240;
-const MOBILE_NOTE_WIDTH = 220;
-const MOBILE_NOTE_HEIGHT = 210;
+const NOTE_HEIGHT = 332;
+const MOBILE_NOTE_WIDTH = 240;
+const MOBILE_NOTE_HEIGHT = 344;
 const NOTE_COLORS = [
   "#ffd9ec",
   "#ffeab6",
@@ -24,6 +26,7 @@ let supabaseClient = null;
 let syncTimeoutId = null;
 let pendingSyncIds = new Map();
 let locallyDirtyNoteIds = new Map();
+let translationTimeoutIds = new Map();
 let activeEditingNoteId = null;
 let isHydratingFromRemote = false;
 let lastKnownViewportWidth = window.innerWidth;
@@ -35,13 +38,19 @@ function loadNotes() {
     if (!savedNotes) {
       return [
         createNoteData({
-          text: "Tap here and write your sweetest ideas.",
+          text: "Good morning",
+          translatedText: "Bom dia",
+          detectedLanguage: "EN",
+          translationStatus: "translated",
           x: 42,
           y: 42,
           color: NOTE_COLORS[0]
         }),
         createNoteData({
-          text: "Drag notes wherever you like.",
+          text: "Tudo bem?",
+          translatedText: "How are you?",
+          detectedLanguage: "PT-BR",
+          translationStatus: "translated",
           x: 330,
           y: 110,
           color: NOTE_COLORS[2]
@@ -49,11 +58,27 @@ function loadNotes() {
       ];
     }
 
-    return JSON.parse(savedNotes);
+    return JSON.parse(savedNotes).map(normalizeStoredNote);
   } catch (error) {
     console.error("Could not load notes from localStorage.", error);
     return [];
   }
+}
+
+function normalizeStoredNote(note) {
+  const legacyText = typeof note.text === "string" ? note.text : "";
+
+  return {
+    id: note.id || crypto.randomUUID(),
+    text: legacyText,
+    translatedText: typeof note.translatedText === "string" ? note.translatedText : "",
+    detectedLanguage: note.detectedLanguage || null,
+    translationStatus: note.translationStatus || (legacyText ? "idle" : "idle"),
+    color: note.color || NOTE_COLORS[0],
+    x: Number(note.x) || 24,
+    y: Number(note.y) || 24,
+    zIndex: Number(note.zIndex ?? note.z_index) || 1
+  };
 }
 
 function saveNotes() {
@@ -91,15 +116,18 @@ function initializeSupabase() {
 function createNoteData(overrides = {}) {
   highestZIndex += 1;
 
-  return {
+  return normalizeStoredNote({
     id: crypto.randomUUID(),
     text: "",
+    translatedText: "",
+    detectedLanguage: null,
+    translationStatus: "idle",
     color: NOTE_COLORS[Math.floor(Math.random() * NOTE_COLORS.length)],
     x: 24,
     y: 24,
     zIndex: highestZIndex,
     ...overrides
-  };
+  });
 }
 
 function getNoteDimensions() {
@@ -143,14 +171,25 @@ function bringNoteToFront(noteId, noteElement) {
   }
 }
 
-function updateNote(noteId, updates) {
+function updateNote(noteId, updates, options = {}) {
   notes = notes.map((note) => (note.id === noteId ? { ...note, ...updates } : note));
   saveNotes();
-  scheduleNoteSync(noteId);
+
+  if (!options.skipSync) {
+    scheduleNoteSync(noteId);
+  }
 }
 
 function deleteNote(noteId) {
   notes = notes.filter((note) => note.id !== noteId);
+  pendingSyncIds.delete(noteId);
+  locallyDirtyNoteIds.delete(noteId);
+
+  if (translationTimeoutIds.has(noteId)) {
+    window.clearTimeout(translationTimeoutIds.get(noteId));
+    translationTimeoutIds.delete(noteId);
+  }
+
   saveNotes();
   renderNotes();
   deleteNoteFromRemote(noteId);
@@ -164,8 +203,68 @@ function addNewNote() {
   renderNotes();
   scheduleNoteSync(note.id);
 
-  const textArea = notesBoard.querySelector(`[data-note-id="${note.id}"] .note-text`);
+  const textArea = notesCanvas.querySelector(`[data-note-id="${note.id}"] .note-source-text`);
   textArea?.focus();
+}
+
+function getTranslationStatusMessage(note) {
+  if (!note.text.trim()) {
+    return "";
+  }
+
+  if (note.translationStatus === "translating") {
+    return "Translating...";
+  }
+
+  if (note.translationStatus === "setup") {
+    return "Add the DeepL function to turn this on.";
+  }
+
+  if (note.translationStatus === "unsupported") {
+    return "Try English or Brazilian Portuguese.";
+  }
+
+  if (note.translationStatus === "error") {
+    return "Translation could not be loaded right now.";
+  }
+
+  if (note.detectedLanguage?.startsWith("PT")) {
+    return "Brazilian Portuguese -> English";
+  }
+
+  if (note.detectedLanguage?.startsWith("EN")) {
+    return "English -> Brazilian Portuguese";
+  }
+
+  if (note.translationStatus === "translated") {
+    return "Translated automatically";
+  }
+
+  return "Waiting for text...";
+}
+
+function getTranslationDisplayText(note) {
+  if (note.translatedText) {
+    return note.translatedText;
+  }
+
+  if (!note.text.trim()) {
+    return "The translation will appear here.";
+  }
+
+  if (note.translationStatus === "translating") {
+    return "Listening for the finished translation...";
+  }
+
+  if (note.translationStatus === "setup") {
+    return "This note is ready for translation once the DeepL function is deployed.";
+  }
+
+  if (note.translationStatus === "unsupported") {
+    return "Automatic switching is tuned for English and Brazilian Portuguese.";
+  }
+
+  return "Translation will appear here shortly.";
 }
 
 function renderNotes() {
@@ -187,9 +286,11 @@ function renderNotes() {
     .forEach((note) => {
       const noteFragment = noteTemplate.content.cloneNode(true);
       const noteElement = noteFragment.querySelector(".note");
-      const textArea = noteFragment.querySelector(".note-text");
+      const textArea = noteFragment.querySelector(".note-source-text");
       const label = noteFragment.querySelector(".sr-only");
       const deleteButton = noteFragment.querySelector(".delete-note-button");
+      const translationElement = noteFragment.querySelector(".note-translation");
+      const translationStatus = noteFragment.querySelector(".translation-status");
 
       noteElement.dataset.noteId = note.id;
       noteElement.style.left = `${note.x}px`;
@@ -201,13 +302,27 @@ function renderNotes() {
       textArea.id = textAreaId;
       textArea.value = note.text;
       label.htmlFor = textAreaId;
+      translationElement.textContent = getTranslationDisplayText(note);
+      translationStatus.textContent = getTranslationStatusMessage(note);
+      translationStatus.dataset.state = note.translationStatus;
 
       textArea.addEventListener("input", (event) => {
-        updateNote(note.id, { text: event.target.value });
+        const nextText = event.target.value;
+        const trimmedText = nextText.trim();
+
+        updateNote(note.id, {
+          text: nextText,
+          translatedText: trimmedText ? "" : "",
+          detectedLanguage: trimmedText ? note.detectedLanguage : null,
+          translationStatus: trimmedText ? "translating" : "idle"
+        });
+
+        scheduleTranslation(note.id);
       });
 
       textArea.addEventListener("focus", () => {
         activeEditingNoteId = note.id;
+        bringNoteToFront(note.id, noteElement);
       });
 
       textArea.addEventListener("blur", () => {
@@ -216,11 +331,6 @@ function renderNotes() {
         }
       });
 
-      textArea.addEventListener("focus", () => {
-        activeEditingNoteId = note.id;
-        bringNoteToFront(note.id, noteElement);
-      });
-      
       deleteButton.addEventListener("click", () => {
         deleteNote(note.id);
       });
@@ -232,7 +342,7 @@ function renderNotes() {
   updateBoardCanvasSize();
 
   if (focusState?.noteId) {
-    const nextTextArea = notesCanvas.querySelector(`[data-note-id="${focusState.noteId}"] .note-text`);
+    const nextTextArea = notesCanvas.querySelector(`[data-note-id="${focusState.noteId}"] .note-source-text`);
 
     if (nextTextArea) {
       nextTextArea.focus();
@@ -255,7 +365,7 @@ function setupDrag(noteElement, noteId) {
   let dragOffsetY = 0;
 
   noteElement.addEventListener("pointerdown", (event) => {
-    if (event.target.closest(".delete-note-button") || event.target.closest(".note-text")) {
+    if (event.target.closest(".delete-note-button") || event.target.closest(".note-source-text")) {
       return;
     }
 
@@ -266,12 +376,11 @@ function setupDrag(noteElement, noteId) {
 
       event.preventDefault();
       bringNoteToFront(noteId, noteElement);
-    }
-    else {
+    } else {
       event.preventDefault();
+      bringNoteToFront(noteId, noteElement);
     }
 
-    bringNoteToFront(noteId, noteElement);
     noteElement.classList.add("is-dragging");
 
     const noteRect = noteElement.getBoundingClientRect();
@@ -295,7 +404,11 @@ function setupDrag(noteElement, noteId) {
 
     const stopDragging = (pointerEvent) => {
       noteElement.classList.remove("is-dragging");
-      noteElement.releasePointerCapture(pointerEvent.pointerId);
+
+      if (noteElement.hasPointerCapture(pointerEvent.pointerId)) {
+        noteElement.releasePointerCapture(pointerEvent.pointerId);
+      }
+
       noteElement.removeEventListener("pointermove", handlePointerMove);
       noteElement.removeEventListener("pointerup", stopDragging);
       noteElement.removeEventListener("pointercancel", stopDragging);
@@ -305,18 +418,6 @@ function setupDrag(noteElement, noteId) {
     noteElement.addEventListener("pointerup", stopDragging);
     noteElement.addEventListener("pointercancel", stopDragging);
   });
-}
-
-function handleViewportResize() {
-  const widthChanged = Math.abs(window.innerWidth - lastKnownViewportWidth) > 1;
-  lastKnownViewportWidth = window.innerWidth;
-
-  if (widthChanged) {
-    keepNotesInsideBoard();
-    return;
-  }
-
-  updateBoardCanvasSize();
 }
 
 function keepNotesInsideBoard() {
@@ -342,14 +443,17 @@ function keepNotesInsideBoard() {
 }
 
 function normalizeRemoteNote(note) {
-  return {
+  return normalizeStoredNote({
     id: note.id,
     text: note.text || "",
+    translatedText: note.translated_text || "",
+    detectedLanguage: note.detected_language || null,
+    translationStatus: note.translation_status || "idle",
     color: note.color || NOTE_COLORS[0],
     x: Number(note.x) || 24,
     y: Number(note.y) || 24,
     zIndex: Number(note.z_index) || 1
-  };
+  });
 }
 
 function notesAreEqual(firstNotes, secondNotes) {
@@ -363,6 +467,9 @@ function notesAreEqual(firstNotes, secondNotes) {
     return (
       note.id === otherNote.id &&
       note.text === otherNote.text &&
+      note.translatedText === otherNote.translatedText &&
+      note.detectedLanguage === otherNote.detectedLanguage &&
+      note.translationStatus === otherNote.translationStatus &&
       note.color === otherNote.color &&
       note.x === otherNote.x &&
       note.y === otherNote.y &&
@@ -387,6 +494,9 @@ function noteToRow(note) {
   return {
     id: note.id,
     text: note.text,
+    translated_text: note.translatedText,
+    detected_language: note.detectedLanguage,
+    translation_status: note.translationStatus,
     color: note.color,
     x: Math.round(note.x),
     y: Math.round(note.y),
@@ -397,7 +507,7 @@ function noteToRow(note) {
 async function loadNotesFromRemote() {
   const { data, error } = await supabaseClient
     .from("notes")
-    .select("id, text, color, x, y, z_index")
+    .select("id, text, translated_text, detected_language, translation_status, color, x, y, z_index")
     .order("z_index", { ascending: true });
 
   if (error) {
@@ -425,7 +535,12 @@ async function syncNotesFromRemote() {
     .sort((first, second) => (first.zIndex || 0) - (second.zIndex || 0));
 
   if (sortedRemoteNotes.length === 0 && notes.length > 0) {
-    await supabaseClient.from("notes").upsert(notes.map(noteToRow));
+    const { error } = await supabaseClient.from("notes").upsert(notes.map(noteToRow));
+
+    if (error) {
+      throw error;
+    }
+
     setSyncStatus("Shared board ready. Everyone sees the same notes.", "ready");
     return;
   }
@@ -491,6 +606,75 @@ function scheduleNoteSync(noteId) {
   }, 250);
 }
 
+function scheduleTranslation(noteId) {
+  if (translationTimeoutIds.has(noteId)) {
+    window.clearTimeout(translationTimeoutIds.get(noteId));
+  }
+
+  const timeoutId = window.setTimeout(() => {
+    translationTimeoutIds.delete(noteId);
+    translateNote(noteId).catch((error) => {
+      console.error("Could not translate note.", error);
+
+      const latestNote = notes.find((note) => note.id === noteId);
+      if (!latestNote?.text.trim()) {
+        return;
+      }
+
+      updateNote(noteId, { translationStatus: "error" });
+      renderNotes();
+    });
+  }, TRANSLATION_DEBOUNCE_MS);
+
+  translationTimeoutIds.set(noteId, timeoutId);
+}
+
+async function translateNote(noteId) {
+  const note = notes.find((entry) => entry.id === noteId);
+  const sourceText = note?.text.trim();
+
+  if (!note || !sourceText) {
+    return;
+  }
+
+  if (!supabaseClient) {
+    updateNote(noteId, { translatedText: "", translationStatus: "setup" });
+    renderNotes();
+    return;
+  }
+
+  const { data, error } = await supabaseClient.functions.invoke(TRANSLATE_FUNCTION_NAME, {
+    body: { text: sourceText }
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  const latestNote = notes.find((entry) => entry.id === noteId);
+
+  if (!latestNote || latestNote.text.trim() !== sourceText) {
+    return;
+  }
+
+  if (data?.unsupported) {
+    updateNote(noteId, {
+      translatedText: "",
+      detectedLanguage: data.detectedLanguage || null,
+      translationStatus: "unsupported"
+    });
+    renderNotes();
+    return;
+  }
+
+  updateNote(noteId, {
+    translatedText: data?.translatedText || "",
+    detectedLanguage: data?.detectedLanguage || null,
+    translationStatus: "translated"
+  });
+  renderNotes();
+}
+
 async function deleteNoteFromRemote(noteId) {
   if (!supabaseClient) {
     return;
@@ -530,6 +714,18 @@ function subscribeToRemoteChanges() {
       }
     )
     .subscribe();
+}
+
+function handleViewportResize() {
+  const widthChanged = Math.abs(window.innerWidth - lastKnownViewportWidth) > 1;
+  lastKnownViewportWidth = window.innerWidth;
+
+  if (widthChanged) {
+    keepNotesInsideBoard();
+    return;
+  }
+
+  updateBoardCanvasSize();
 }
 
 async function initializeApp() {
